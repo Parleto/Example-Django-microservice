@@ -1,0 +1,165 @@
+#!/usr/bin/env python3.11
+# Tested on Python3.11, may still work on another versions
+
+import argparse
+from os import environ
+import sys
+
+from contextlib import suppress
+from pathlib import Path
+from subprocess import Popen
+
+
+BASE_DIR = Path(__file__).resolve().parent
+BACKEND_DIR = BASE_DIR / 'backend'
+REQUIREMENTS_FILE = BACKEND_DIR / 'requirements.txt'
+VENV_NAME = '.venv'
+VENV_DIR = BACKEND_DIR / VENV_NAME
+PYTHON_BIN = VENV_DIR / 'bin' / 'python'
+
+
+parser = argparse.ArgumentParser(description='Project commands')
+group = parser.add_mutually_exclusive_group()
+group.add_argument(
+    '-s',
+    '--setup',
+    action='store_true',
+    help='initialize/update project environment',
+)
+group.add_argument(
+    '-d',
+    '--dev',
+    const=True,
+    help='run development server (hostname and/or port are optional)',
+    metavar='PORT / HOSTNAME:PORT',
+    nargs='?',
+)
+group.add_argument(
+    '-mm',
+    '--messages-make',
+    action='store_true',
+    help='make messages for translations',
+)
+group.add_argument(
+    '-mc',
+    '--messages-compile',
+    action='store_true',
+    help='compile messages for translations',
+)
+group.add_argument(
+    '-t',
+    '--tests',
+    action='store_true',
+    help='run tests',
+)
+args = parser.parse_args()
+
+
+def dev_server_start():
+    '''
+    Starts dev server.
+    Also checks if custom server address is provided and tries to set it.
+    '''
+    if args.dev is not True:
+        server_addr = args.dev
+    else:
+        server_addr = ':'.join((
+            environ[f'DEV_HTTP_{i}']
+            for i in ('HOST', 'PORT')
+            if environ.get(f'DEV_HTTP_{i}')
+        ))
+
+    env = environ.copy()
+    env['DEBUG'] = '1'
+    Popen(
+        [PYTHON_BIN, 'manage.py', 'runserver', server_addr],
+        cwd=BACKEND_DIR / 'project',
+        env=env,
+    ).wait()
+
+
+def venv_setup():
+    '''
+    Prepares project before use.
+    Creates python's virtual environment.
+    Upgrades pip and installs required packages to run project.
+    '''
+    if not PYTHON_BIN.exists():
+        print('Creating venv...')
+        Popen([sys.executable, '-m', 'venv', VENV_DIR]).wait()
+    print('Upgrading pip...')
+    Popen([PYTHON_BIN, '-m', 'pip', 'install', '--upgrade', 'pip']).wait()
+    print('Installing required packages...')
+    Popen(
+        [
+            PYTHON_BIN,
+            '-m',
+            'pip',
+            'install',
+            '-r',
+            REQUIREMENTS_FILE,
+        ],
+    ).wait()
+    print('PROJECT READY TO RUN')
+
+
+def translations_messages_make():
+    '''
+    Creates or updates *.po files containing all messages for translation.
+    '''
+    Popen(
+        [
+            PYTHON_BIN,
+            'manage.py',
+            'makemessages',
+            '--all',
+            '--no-location',
+        ],
+        cwd=BACKEND_DIR / 'project',
+    ).wait()
+
+
+def translations_messages_compile():
+    '''
+    Compiles translations from *.po files into binary files.
+    '''
+    Popen(
+        [
+            PYTHON_BIN,
+            BACKEND_DIR / 'project' / 'manage.py',
+            'compilemessages',
+            '--ignore=' + VENV_NAME + '/*',
+        ],
+        cwd=BACKEND_DIR,
+    ).wait()
+
+
+def tests_start():
+    '''
+    Starts all tests in microservice with pytest.
+    '''
+    Popen(
+        [
+            VENV_DIR / 'bin' / 'pytest',
+        ],
+        cwd=BACKEND_DIR / 'project',
+    ).wait()
+
+
+if __name__ == '__main__':
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit()
+
+    with suppress(KeyboardInterrupt):
+        if args.setup:
+            venv_setup()
+        if args.dev:
+            dev_server_start()
+        if args.messages_make:
+            translations_messages_make()
+        if args.messages_compile:
+            translations_messages_compile()
+        if args.tests:
+            tests_start()
+
